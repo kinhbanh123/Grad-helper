@@ -4,8 +4,8 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
-from ThesisFormatter.models.data_classes import Settings, Figure, Table, Citation
-from ThesisFormatter.utils.helpers import format_citation_apa
+from core.models.data_classes import Settings, Figure, Table, Citation
+from core.utils.helpers import format_citation_apa
 from typing import List
 import os
 import re

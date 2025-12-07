@@ -8,8 +8,8 @@ import os
 import shutil
 import uvicorn
 import uuid
-from ThesisFormatter.models.data_classes import Settings, Figure, Table, Citation
-from ThesisFormatter.utils.export_docx import export_to_docx
+from core.models.data_classes import Settings, Figure, Table, Citation
+from core.utils.export_docx import export_to_docx
 
 app = FastAPI()
 

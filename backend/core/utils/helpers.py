@@ -1,4 +1,4 @@
-from ThesisFormatter.models.data_classes import Citation
+from core.models.data_classes import Citation
 
 def format_citation_apa(c: Citation) -> str:
     """Format a citation in APA style"""
