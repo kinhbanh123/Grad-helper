@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Node.js / Next.js
+node_modules/
+.next/
+out/
+build/
+.DS_Store
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Project Specific
+backend/images/
+backend/saved_project.json
+*.docx
+*.pdf
+tmp/
+frontend/.next/
+frontend/node_modules/
