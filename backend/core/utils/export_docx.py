@@ -10,6 +10,43 @@ from typing import List
 import os
 import re
 import traceback
+import matplotlib.pyplot as plt
+import io
+
+def render_latex_to_image(latex_str):
+    """Renders LaTeX string to an image stream using matplotlib."""
+    try:
+        fig = plt.figure(figsize=(0.1, 0.1)) # Dummy size, will be adjusted
+        
+        # Clean up: matplotlib expects $...$ for math.
+        render_str = latex_str
+        if not render_str.startswith('$'):
+            render_str = f"${render_str}$"
+            
+        text = fig.text(0.5, 0.5, render_str, fontsize=12, ha='center', va='center')
+        
+        # Get the bounding box of the text
+        renderer = fig.canvas.get_renderer()
+        bbox = text.get_window_extent(renderer=renderer)
+        
+        # Resize figure to fit text
+        # Convert bbox pixels to inches (dpi default is 100)
+        dpi = 100
+        fig.set_size_inches(bbox.width / dpi + 0.1, bbox.height / dpi + 0.1)
+        
+        # Re-position text
+        text.set_position((0.5, 0.5))
+        
+        # Save to buffer
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=300, transparent=True, bbox_inches='tight', pad_inches=0.02)
+        buf.seek(0)
+        plt.close(fig)
+        return buf
+    except Exception as e:
+        print(f"Error rendering LaTeX: {e}")
+        plt.close(fig)
+        return None
 
 def create_element(name):
     return OxmlElement(name)
@@ -62,12 +99,30 @@ def setup_styles(doc, settings: Settings):
     """Configure document styles to match thesis requirements"""
     styles = doc.styles
     
-    # Normal Style
-    style_normal = styles['Normal']
-    set_font_complex(style_normal.font, settings.font_family, settings.font_size, color=RGBColor(0, 0, 0))
-    paragraph_format = style_normal.paragraph_format
-    paragraph_format.line_spacing = settings.line_spacing
-    paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    # --- STYLES ---
+    # --- STYLES ---
+    style = doc.styles['Normal']
+    # Use set_font_complex to ensure font is applied to all script types (important for Vietnamese)
+    set_font_complex(style.font, settings.font_family, settings.font_size, color=RGBColor(0, 0, 0))
+
+    # Paragraph formatting for Normal style
+    pf = style.paragraph_format
+    pf.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    pf.line_spacing = settings.line_spacing
+    # Áp dụng thụt đầu dòng từ settings
+    pf.first_line_indent = Cm(settings.indent)
+    # Áp dụng khoảng cách đoạn
+    pf.space_after = Pt(8.5) 
+    pf.space_before = Pt(0)
+
+    # Set Paper Size to A4 (Critical for correct margins)
+    for section in doc.sections:
+        section.page_width = Cm(21.0)
+        section.page_height = Cm(29.7)
+        section.top_margin = Cm(settings.margin_top)
+        section.bottom_margin = Cm(settings.margin_bottom)
+        section.left_margin = Cm(settings.margin_left)
+        section.right_margin = Cm(settings.margin_right)
     
     # Heading 1
     style_h1 = styles['Heading 1']
@@ -91,6 +146,27 @@ def setup_styles(doc, settings: Settings):
     paragraph_format = style_h3.paragraph_format
     paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
     paragraph_format.space_before = Pt(12)
+    paragraph_format.space_after = Pt(6)
+    
+    # Heading 4
+    style_h4 = styles['Heading 4']
+    set_font_complex(style_h4.font, settings.font_family, settings.font_size, italic=True, color=RGBColor(0, 0, 0))
+    paragraph_format = style_h4.paragraph_format
+    paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    paragraph_format.space_before = Pt(6)
+    paragraph_format.space_after = Pt(6)
+    
+    # Heading 5
+    try:
+        style_h5 = styles.add_style('Heading 5', WD_STYLE_TYPE.PARAGRAPH)
+    except:
+        style_h5 = styles['Heading 5']
+    style_h5.base_style = styles['Normal']
+    set_font_complex(style_h5.font, settings.font_family, settings.font_size, italic=True, color=RGBColor(0, 0, 0))
+    paragraph_format = style_h5.paragraph_format
+    paragraph_format.left_indent = Cm(0.63) # Indent slightly
+    paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    paragraph_format.space_before = Pt(6)
     paragraph_format.space_after = Pt(6)
     
     # Front Heading (for TOC, List of Tables, etc. - Looks like H1 but not in TOC)
@@ -183,6 +259,8 @@ def export_to_docx(file_path: str, text: str, settings: Settings,
         h1_count = 0
         h2_count = 0
         h3_count = 0
+        h4_count = 0
+        h5_count = 0
         
         lines = text.split("\n")
         i = 0
@@ -253,10 +331,23 @@ def export_to_docx(file_path: str, text: str, settings: Settings,
                 h1_count += 1
                 h2_count = 0
                 h3_count = 0
-                from ThesisFormatter.utils.helpers import to_roman
+                h4_count = 0
+                from core.utils.helpers import to_roman
                 roman = to_roman(h1_count)
                 raw_title = line[2:].strip()
-                full_title = f"CHƯƠNG {roman}: {raw_title.upper()}"
+                
+                if settings.auto_numbering:
+                    # Logic tách dòng tiêu đề chương
+                    if settings.h1_split:
+                        # Sử dụng \n để tạo soft break (Shift+Enter) trong Word
+                        # Điều này giúp tiêu đề vẫn là 1 paragraph (tốt cho TOC) nhưng hiển thị 2 dòng
+                        prefix = f"{settings.h1_prefix} {roman}" if settings.h1_prefix else f"{roman}"
+                        full_title = f"{prefix}\n{raw_title.upper()}"
+                    else:
+                        prefix = f"{settings.h1_prefix} {roman}: " if settings.h1_prefix else f"{roman}. "
+                        full_title = f"{prefix}{raw_title.upper()}"
+                else:
+                    full_title = raw_title.upper()
                 
                 heading = doc.add_paragraph(full_title, style='Heading 1')
                 for run in heading.runs:
@@ -266,8 +357,14 @@ def export_to_docx(file_path: str, text: str, settings: Settings,
             elif line.startswith("## "):
                 h2_count += 1
                 h3_count = 0
+                h4_count = 0
                 raw_title = line[3:].strip()
-                full_title = f"{h1_count}.{h2_count}. {raw_title}"
+                if settings.auto_numbering:
+                    # Nếu hierarchical_numbering = True -> 1.1, ngược lại -> 1
+                    prefix = f"{h1_count}.{h2_count}." if settings.hierarchical_numbering else f"{h2_count}."
+                    full_title = f"{prefix} {raw_title}"
+                else:
+                    full_title = raw_title
                 
                 heading = doc.add_paragraph(full_title, style='Heading 2')
                 for run in heading.runs:
@@ -276,59 +373,240 @@ def export_to_docx(file_path: str, text: str, settings: Settings,
             # Heading 3: 1.1.1
             elif line.startswith("### "):
                 h3_count += 1
+                h4_count = 0
                 raw_title = line[4:].strip()
-                full_title = f"{h1_count}.{h2_count}.{h3_count}. {raw_title}"
+                if settings.auto_numbering:
+                    prefix = f"{h1_count}.{h2_count}.{h3_count}." if settings.hierarchical_numbering else f"{h2_count}.{h3_count}."
+                    full_title = f"{prefix} {raw_title}"
+                else:
+                    full_title = raw_title
                 
                 heading = doc.add_paragraph(full_title, style='Heading 3')
                 for run in heading.runs:
                     set_font_complex(run.font, settings.font_family, settings.h3_size, bold=True, italic=True, color=RGBColor(0, 0, 0))
+
+            # Heading 4
+            elif line.startswith("#### "):
+                h4_count += 1
+                h5_count = 0 # Reset h5_count
+                raw_title = line[5:].strip()
+                
+                if settings.auto_numbering:
+                    prefix = f"{h1_count}.{h2_count}.{h3_count}.{h4_count}." if settings.hierarchical_numbering else f"{h2_count}.{h3_count}.{h4_count}."
+                    full_title = f"{prefix} {raw_title}"
+                else:
+                    full_title = raw_title
+                
+                # Word usually doesn't have Heading 4 by default or it's small. We'll use Heading 4 style if exists or Normal bold italic
+                try:
+                    heading = doc.add_paragraph(full_title, style='Heading 4')
+                except:
+                    heading = doc.add_paragraph(full_title, style='Normal')
+                
+                for run in heading.runs:
+                    set_font_complex(run.font, settings.font_family, settings.font_size, bold=True, italic=True, color=RGBColor(0, 0, 0))
             
-            elif line.startswith("- "):
-                p = doc.add_paragraph(line[2:], style='List Bullet')
-                for run in p.runs:
-                    set_font_complex(run.font, settings.font_family, settings.font_size, color=RGBColor(0, 0, 0))
+            # Bullet points: - , -- , ---
+            elif re.match(r'^(\-{1,3}|\*{1,3})\s', line):
+                match = re.match(r'^(\-{1,3}|\*{1,3})\s', line)
+                prefix = match.group(1)
+                level = len(prefix)
+                content = line[len(prefix)+1:].strip()
+                
+                # Chuẩn đồ án Việt Nam: dùng gạch đầu dòng (-) và dấu cộng (+)
+                bullet_char = "-"
+                if level == 2:
+                    bullet_char = "+"
+                elif level == 3:
+                    bullet_char = "-"
+                
+                # Manual bullet implementation using Normal style + Indent
+                p = doc.add_paragraph(style='Normal')
+                
+                # Calculate indent
+                # Base indent (e.g. 1.27cm) + Level indent
+                base_indent = settings.indent # cm
+                level_indent = (level - 1) * 0.75 # cm
+                total_indent = base_indent + level_indent
+                
+                # Hanging indent logic:
+                # Left Indent = Total Indent + Hanging Amount
+                # First Line Indent = -Hanging Amount
+                # This makes the bullet sit at Total Indent, and text wrap nicely.
+                hanging = 0.63 # cm (approx 0.25 inch)
+                
+                p_fmt = p.paragraph_format
+                p_fmt.left_indent = Cm(total_indent + hanging)
+                p_fmt.first_line_indent = Cm(-hanging)
+                p_fmt.tab_stops.add_tab_stop(Cm(total_indent + hanging))
+                
+                # Add bullet char and tab
+                run = p.add_run(f"{bullet_char}\t")
+                set_font_complex(run.font, settings.font_family, settings.font_size, color=RGBColor(0, 0, 0))
+                
+                # Add content
+                # We need to process formatting in content as well (bold, italic, latex)
+                # Reuse the logic? Or just simple add for now?
+                # Let's reuse the simple formatting logic by splitting
+                parts = re.split(r'(\*\*.*?\*\*|\*.*?\*|<u>.*?</u>|\$.*?\$)', content)
+                for part in parts:
+                    if not part: continue
+                     # LaTeX handling
+                    if part.startswith('$') and part.endswith('$'):
+                        latex_content = part
+                        # Handle display math inside bullet? usually inline
+                        inner_tex = part
+                        if part.startswith('$$'): inner_tex = part[2:-2]
+                        elif part.startswith('$'): inner_tex = part[1:-1]
+                        
+                        image_stream = render_latex_to_image(inner_tex)
+                        if image_stream:
+                            run = p.add_run()
+                            run.add_picture(image_stream, height=Cm(0.5))
+                        else:
+                            run = p.add_run(part)
+                            set_font_complex(run.font, settings.font_family, settings.font_size, color=RGBColor(0, 0, 0))
+                        continue
+
+                    run = p.add_run()
+                    text_content = part
+                    is_bold = False
+                    is_italic = False
+                    is_underline = False
+                    
+                    if part.startswith('**') and part.endswith('**'):
+                        text_content = part[2:-2]
+                        is_bold = True
+                    elif part.startswith('*') and part.endswith('*'):
+                        text_content = part[1:-1]
+                        is_italic = True
+                    elif part.startswith('<u>') and part.endswith('</u>'):
+                        text_content = part[3:-4]
+                        is_underline = True
+                        
+                    run.text = text_content
+                    set_font_complex(run.font, settings.font_family, settings.font_size, 
+                                     bold=is_bold, italic=is_italic, color=RGBColor(0, 0, 0))
+                    if is_underline:
+                        run.font.underline = True
             
             elif line.strip():
                 stripped_line = line.strip()
-                # Check for Figure placeholders
-                if stripped_line.startswith("[") and stripped_line.endswith("]"):
-                    print(f"DEBUG: Processing potential figure line: '{stripped_line}'")
-                    match = re.search(r"\[\s*(Hình\s+\d+\.\d+)\s*:", stripped_line)
-                    if match:
-                        fig_num = match.group(1)
-                        figure = next((f for f in figures if f.number.replace(" ", "") == fig_num.replace(" ", "")), None)
-                        
-                        if figure:
-                            img_path = figure.path
-                            if not os.path.isabs(img_path):
-                                img_path = os.path.abspath(img_path)
+                print(f"DEBUG LINE: '{stripped_line}'")
+                
+                # Check for Figure placeholders: [Hình 1.1: Caption]
+                # Relaxed regex to handle potential spaces
+                match = re.match(r'\[\s*(Hình \d+\.\d+)\s*:\s*(.*)\s*\]', stripped_line)
+                if match:
+                    fig_num = match.group(1)
+                    caption = match.group(2)
+                    print(f"DEBUG: Found placeholder for {fig_num}")
+                    
+                    # Find figure data
+                    # Normalize spaces for comparison
+                    fig_data = next((f for f in figures if f.number.replace(" ", "") == fig_num.replace(" ", "")), None)
+                    
+                    if fig_data:
+                        print(f"DEBUG: Found figure data: {fig_data.path}")
+                        if fig_data.path:
+                            try:
+                                # Resolve path if relative
+                                img_path = fig_data.path
+                                if not os.path.isabs(img_path):
+                                    img_path = os.path.abspath(img_path)
                                 
-                            if os.path.exists(img_path):
-                                try:
-                                    # Add spacing before image
-                                    doc.add_paragraph()
+                                print(f"DEBUG: Checking image path: {img_path}")
+                                if os.path.exists(img_path):
+                                    # Add image
+                                    # Use width from figure data if available, else default to 16cm
+                                    width = Cm(fig_data.width) if hasattr(fig_data, 'width') and fig_data.width else Cm(16)
                                     
-                                    run = doc.add_paragraph().add_run()
-                                    width_cm = figure.width if hasattr(figure, 'width') and figure.width else 16
-                                    print(f"DEBUG: Inserting image {img_path} with width {width_cm} cm")
-                                    run.add_picture(img_path, width=Cm(width_cm))
-                                    doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
-                                    print(f"DEBUG: Successfully inserted image from {img_path}")
-                                except Exception as e:
-                                    print(f"ERROR adding picture to docx: {e}")
-                                    traceback.print_exc()
-                            else:
-                                print(f"ERROR: Image file does not exist at: {img_path}")
-                    
-                    # Add Caption BELOW image using Figure Caption Style
-                    caption_text = stripped_line.strip("[]")
-                    doc.add_paragraph(caption_text, style='Figure Caption')
-                    
-                    # Add spacing after image group
-                    doc.add_paragraph()
-                    
+                                    # Create a new paragraph for the image
+                                    p = doc.add_paragraph()
+                                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                    
+                                    # Reset indentation to ensure true center
+                                    p.paragraph_format.left_indent = Cm(0)
+                                    p.paragraph_format.right_indent = Cm(0)
+                                    p.paragraph_format.first_line_indent = Cm(0)
+                                    
+                                    run = p.add_run()
+                                    run.add_picture(img_path, width=width)
+                                    print(f"DEBUG: Inserted image {img_path}")
+                                    
+                                    # Add caption
+                                    caption_text = f"{fig_num}: {caption}"
+                                    caption_p = doc.add_paragraph(caption_text, style='Caption')
+                                    caption_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                    
+                                else:
+                                    print(f"DEBUG: Image path not found: {img_path}")
+                                    doc.add_paragraph(f"[Hình ảnh không tìm thấy: {img_path}]", style='Normal')
+                            except Exception as e:
+                                print(f"Error adding image {img_path}: {e}")
+                                doc.add_paragraph(f"[Lỗi chèn hình: {fig_num}]", style='Normal')
+                        else:
+                             print("DEBUG: Figure path is empty")
+                    else:
+                        print(f"DEBUG: Figure data not found for {fig_num}")
+                        doc.add_paragraph(f"[Hình ảnh không tìm thấy dữ liệu: {fig_num}]", style='Normal')
+                
                 else:
-                    p = doc.add_paragraph(line)
+                    # Normal paragraph with formatting support
+                    p = doc.add_paragraph(style='Normal')
+                    
+                    # Regex to split by formatting tokens: **bold**, *italic*, <u>underline</u>, $$display$$, $inline$
+                    # Priority: $$ first
+                    parts = re.split(r'(\$\$.*?\$\$|\$.*?\$|\*\*.*?\*\*|\*.*?\*|<u>.*?</u>)', stripped_line)
+                    
+                    for part in parts:
+                        if not part: continue
+                        
+                        # LaTeX handling
+                        if part.startswith('$') and part.endswith('$'):
+                            latex_content = part
+                            # Handle display math $$...$$
+                            is_display = part.startswith('$$')
+                            if is_display:
+                                inner_tex = part[2:-2]
+                                latex_content = inner_tex 
+                            
+                            image_stream = render_latex_to_image(latex_content)
+                            if image_stream:
+                                if is_display:
+                                    run = p.add_run()
+                                    run.add_picture(image_stream, height=Cm(0.8))
+                                else:
+                                    run = p.add_run()
+                                    run.add_picture(image_stream, height=Cm(0.5))
+                            else:
+                                # Fallback
+                                run = p.add_run(part)
+                                set_font_complex(run.font, settings.font_family, settings.font_size, color=RGBColor(0, 0, 0))
+                            continue
+
+                        run = p.add_run()
+                        text_content = part
+                        is_bold = False
+                        is_italic = False
+                        is_underline = False
+                        
+                        if part.startswith('**') and part.endswith('**'):
+                            text_content = part[2:-2]
+                            is_bold = True
+                        elif part.startswith('*') and part.endswith('*'):
+                            text_content = part[1:-1]
+                            is_italic = True
+                        elif part.startswith('<u>') and part.endswith('</u>'):
+                            text_content = part[3:-4]
+                            is_underline = True
+                            
+                        run.text = text_content
+                        set_font_complex(run.font, settings.font_family, settings.font_size, 
+                                         bold=is_bold, italic=is_italic, color=RGBColor(0, 0, 0))
+                        if is_underline:
+                            run.font.underline = True
+                    
                     p.paragraph_format.first_line_indent = Cm(settings.indent)
                     p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
                     for run in p.runs:

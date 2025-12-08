@@ -2,12 +2,14 @@
 
 import { useState, useEffect, useRef } from "react";
 import {
-  Bold, Italic, Underline, Image as ImageIcon, Table as TableIcon,
-  FileText, Download, Settings, ChevronRight, Type, Quote, X, Upload, Plus, Trash2, BookOpen, Edit3, Save, FolderOpen
-} from "lucide-react";
+  Bold, Italic, Underline, Image as ImageIcon, Table as TableIcon, Trash2, Plus, Download, Save, FolderOpen, Settings,
+  FileText, Edit3, BookOpen, ChevronRight, FileDown, Quote, Code, List, Sigma, X, Upload, RefreshCw
+} from 'lucide-react';
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
-import * as Popover from '@radix-ui/react-popover';
+import * as Popover from "@radix-ui/react-popover";
+import 'katex/dist/katex.min.css';
+import Latex from 'react-latex-next';
 
 // --- COMPONENTS ---
 
@@ -69,6 +71,8 @@ export default function Home() {
   // Dialog States
   const [showImageDialog, setShowImageDialog] = useState(false);
   const [showTableDialog, setShowTableDialog] = useState(false);
+  const [showJsonImportDialog, setShowJsonImportDialog] = useState(false);
+  const [jsonImportText, setJsonImportText] = useState("");
 
   // Data States
   const [settings, setSettings] = useState({
@@ -80,9 +84,19 @@ export default function Home() {
     line_spacing: 1.5,
     indent: 1.27,
     margin_top: 2.0,
-    margin_bottom: 2.0,
+    margin_bottom: 2.54,
     margin_left: 3.0,
-    margin_right: 2.0
+    margin_right: 2.0,
+    h1_prefix: "CHƯƠNG",
+    auto_numbering: true,
+    // Tăng mạnh density để ép xuống dòng sớm hơn
+    text_density: 1.15,
+    line_height_scale: 1.0,
+    // Thu nhỏ trang 6% để trừ hao footer/header ngầm
+    page_content_scale: 0.94,
+    hard_wrap: false,
+    h1_split: false,
+    hierarchical_numbering: true
   });
 
   const [figures, setFigures] = useState<any[]>([]);
@@ -120,7 +134,8 @@ export default function Home() {
         const json = await res.json();
         if (json.exists && json.data) {
           setContent(json.data.content);
-          setSettings(json.data.settings);
+          // Merge loaded settings with defaults to ensure new fields (like auto_numbering) exist
+          setSettings(prev => ({ ...prev, ...json.data.settings }));
           setFigures(json.data.figures);
           setCitations(json.data.citations || []);
           console.log("Loaded project data");
@@ -190,6 +205,20 @@ Viết nội dung đồ án của bạn ở đây...
     const prefix = "#".repeat(parseInt(level)) + " ";
     insertText(prefix);
     e.target.value = "";
+  };
+
+  // --- KEYBOARD SHORTCUTS ---
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+      e.preventDefault();
+      insertText("**", "**");
+    } else if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
+      e.preventDefault();
+      insertText("*", "*");
+    } else if ((e.ctrlKey || e.metaKey) && e.key === 'u') {
+      e.preventDefault();
+      insertText("<u>", "</u>");
+    }
   };
 
   // --- IMAGE HANDLING ---
@@ -268,10 +297,12 @@ Viết nội dung đồ án của bạn ở đây...
     }
 
     // Caption at the bottom
-    md += `Bảng 1.${Math.floor(Math.random() * 100)}: ${tableCaption} \n\n`;
+    // Use a temporary placeholder, renumberAssets will fix it
+    md += `Bảng 1.999: ${tableCaption} \n\n`;
 
     insertText(md);
     setShowTableDialog(false);
+    setTableData([["", ""], ["", ""]]);
     setTableCaption("");
   };
 
@@ -288,6 +319,124 @@ Viết nội dung đồ án của bạn ở đây...
     setTableData(newData);
     setTableRows(rows);
     setTableCols(cols);
+  };
+
+  interface Figure {
+    id: number;
+    number: string;
+    caption: string;
+    path: string;
+    url: string;
+    chapter: number;
+    width?: number;
+  }
+
+  const renumberAssets = () => {
+    let updatedContent = content;
+    const newFigures: Figure[] = [];
+
+    // --- FIGURES ---
+    let figCounter = 0;
+
+    // Regex global để thay thế tất cả, hỗ trợ khoảng trắng thừa
+    // Regex: \[ \s* (Hình \d+\.\d+) \s* : \s* (.*?) \s* \]
+    updatedContent = updatedContent.replace(/\[\s*(Hình \d+\.\d+)\s*:\s*(.*?)\s*\]/g, (match, oldNum, caption) => {
+      figCounter++;
+      const newNum = `Hình 1.${figCounter}`;
+
+      // Tìm dữ liệu hình ảnh tương ứng trong danh sách cũ
+      // Ưu tiên tìm theo caption (chính xác nhất)
+      let fig = figures.find(f => f.caption.trim() === caption.trim());
+
+      // Nếu không tìm thấy theo caption, thử tìm theo số cũ (nhưng rủi ro nếu số cũ bị trùng)
+      if (!fig) {
+        const cleanOldNum = oldNum.trim();
+        fig = figures.find(f => f.number.trim() === cleanOldNum || f.number.replace(/\s+/g, '') === cleanOldNum.replace(/\s+/g, ''));
+      }
+
+      if (fig) {
+        // Tạo object hình mới với số mới
+        // Kiểm tra xem hình này đã được thêm vào newFigures chưa (tránh duplicate nếu placeholder xuất hiện 2 lần - dù ít gặp)
+        // Nhưng ở đây ta muốn mỗi placeholder là 1 hình riêng biệt (trừ khi user copy paste placeholder)
+        // Nếu user copy paste, ta vẫn coi là 1 hình (cùng URL) nhưng số khác nhau? 
+        // Logic hiện tại: Mỗi placeholder là 1 entry trong figures.
+
+        const newFig = { ...fig, number: newNum, id: figCounter }; // Cập nhật ID theo thứ tự luôn cho sạch
+        newFigures.push(newFig);
+      }
+
+      return `[${newNum}: ${caption}]`;
+    });
+
+    // --- TABLES ---
+    let tableCounter = 0;
+    updatedContent = updatedContent.replace(/^Bảng \d+\.\d+: (.*)$/gm, (match, caption) => {
+      tableCounter++;
+      return `Bảng 1.${tableCounter}: ${caption}`;
+    });
+
+    setContent(updatedContent);
+    setFigures(newFigures);
+    alert(`Đã cập nhật: ${figCounter} hình, ${tableCounter} bảng.\n(Danh sách hình ảnh đã được làm mới)`);
+  };
+
+  const handleJsonImport = () => {
+    try {
+      const importedCitations = JSON.parse(jsonImportText);
+      if (Array.isArray(importedCitations)) {
+        const newCitations = importedCitations.map((c: any) => ({
+          id: c.id || Date.now().toString() + Math.random().toString(),
+          author: c.author || "",
+          year: c.year || "",
+          title: c.title || "",
+          publisher: c.publisher || "",
+          url: c.url || "",
+          citation_type: c.citation_type || "other"
+        }));
+        setCitations(prev => [...prev, ...newCitations]);
+        setShowJsonImportDialog(false);
+        setJsonImportText("");
+        alert(`Đã thêm ${newCitations.length} trích dẫn!`);
+      } else {
+        alert("JSON phải là một mảng các đối tượng trích dẫn.");
+      }
+    } catch (e) {
+      alert("Lỗi parse JSON: " + e);
+    }
+  };
+
+  const handlePreviewClick = (e: React.MouseEvent) => {
+    // Find closest element with data-source-line
+    const target = e.target as HTMLElement;
+    const sourceElement = target.closest('[data-source-line]');
+
+    if (sourceElement) {
+      const line = parseInt(sourceElement.getAttribute('data-source-line') || '0', 10);
+      if (!isNaN(line) && textareaRef.current) {
+        // Calculate scroll position (approximate)
+        // Assuming 24px per line (depends on textarea styling)
+        const lineHeight = 24;
+        const scrollPos = line * lineHeight;
+
+        textareaRef.current.scrollTo({
+          top: scrollPos,
+          behavior: 'smooth'
+        });
+
+        // Optional: Set cursor position
+        const text = content;
+        const lines = text.split('\n');
+        let charIndex = 0;
+        for (let i = 0; i < line; i++) {
+          if (i < lines.length) {
+            charIndex += lines[i].length + 1; // +1 for newline
+          }
+        }
+
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(charIndex, charIndex);
+      }
+    }
   };
 
   // --- CITATION HANDLING ---
@@ -309,6 +458,23 @@ Viết nội dung đồ án của bạn ở đây...
   // --- EXPORT ---
   const handleExport = async () => {
     try {
+      let contentToExport = content;
+
+      // Nếu bật Hard Wrap, ta sẽ tái tạo nội dung dựa trên các dòng đã tính toán trong Preview
+      if (settings.hard_wrap) {
+        // Lưu ý: Đây là giải pháp phức tạp vì ta cần lấy kết quả từ hàm renderPreview.
+        // Tuy nhiên, hàm renderPreview đang trả về JSX.
+        // Cách đơn giản hơn: Gửi flag hard_wrap xuống backend, và backend sẽ cố gắng mô phỏng (nhưng backend không có canvas).
+        // CÁCH TỐT NHẤT: Ta sẽ thực hiện tính toán lại dòng ở đây (sử dụng logic giống renderPreview) để tạo ra text mới.
+
+        // Tạm thời, để đơn giản và hiệu quả, ta sẽ gửi settings xuống backend và backend sẽ xử lý.
+        // Nhưng backend Python không thể đo font chính xác như Canvas JS.
+
+        // Do đó, ta sẽ không thay đổi content ở đây mà chỉ gửi flag hard_wrap.
+        // NHƯNG, user muốn "Giống hệt Preview".
+        // Vậy ta nên cảnh báo user rằng tính năng này đang thử nghiệm.
+      }
+
       const res = await fetch("http://localhost:8080/api/export/docx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -336,10 +502,259 @@ Viết nội dung đồ án của bạn ở đây...
     }
   };
 
+  // Preview Zoom State
+  const [zoomLevel, setZoomLevel] = useState(100);
+
   // --- PREVIEW RENDERER ---
   const renderPreview = () => {
     const lines = content.split('\n');
-    const elements = [];
+
+    // Helper to parse markdown formatting
+    const parseMarkdown = (text: string): React.ReactNode[] => {
+      // Regex to split by formatting tokens: **bold**, *italic*, <u>underline</u>, $$display$$, $inline$
+      // Priority: $$ first, then $
+      const parts = text.split(/(\$\$.*?\$\$|\$.*?\$|\*\*.*?\*\*|\*.*?\*|<u>.*?<\/u>)/g);
+
+      return parts.map((part, index) => {
+        if (part.startsWith('$$') && part.endsWith('$$')) {
+          // Display Math (Block)
+          return <div key={index} className="text-center my-2"><Latex>{part}</Latex></div>;
+        } else if (part.startsWith('$') && part.endsWith('$')) {
+          // Inline Math
+          return <Latex key={index}>{part}</Latex>;
+        } else if (part.startsWith('**') && part.endsWith('**')) {
+          return <b key={index}>{part.slice(2, -2)}</b>;
+        } else if (part.startsWith('*') && part.endsWith('*')) {
+          return <i key={index}>{part.slice(1, -1)}</i>;
+        } else if (part.startsWith('<u>') && part.endsWith('</u>')) {
+          return <u key={index}>{part.slice(3, -4)}</u>;
+        }
+        return part;
+      });
+    };
+
+    // Constants
+    const PT_TO_CM = 0.03528;
+    const CM_TO_PX = 37.7952755906; // 96 DPI
+    const PT_TO_PX = 1.333333; // 1pt = 1.333px
+
+    const contentWidthCm = 21 - settings.margin_left - settings.margin_right;
+    // Áp dụng Page Scale vào chiều rộng nội dung
+    const contentWidthPx = contentWidthCm * CM_TO_PX * (settings.page_content_scale || 1.0);
+    const indentPx = settings.indent * CM_TO_PX * (settings.page_content_scale || 1.0);
+
+    // Áp dụng Page Scale vào chiều cao trang
+    const pageHeight = (29.7 - settings.margin_top - settings.margin_bottom) * (settings.page_content_scale || 1.0);
+    const lineHeightCm = settings.font_size * PT_TO_CM * settings.line_spacing * (settings.line_height_scale || 1.0);
+    const paraMarginBottom = 0.3; // cm
+
+    // Setup Canvas for measurement
+    let ctx: CanvasRenderingContext2D | null = null;
+    if (typeof window !== 'undefined') {
+      const canvas = document.createElement('canvas');
+      ctx = canvas.getContext('2d');
+      if (ctx) {
+        // Set font chính xác để đo
+        ctx.font = `${settings.font_size * PT_TO_PX}px "${settings.font_family}"`;
+      }
+    }
+
+    const pages: React.ReactNode[][] = [];
+    let currentPage: React.ReactNode[] = [];
+    let currentH = 0;
+
+    // Counters
+    let h1_count = 0;
+    let h2_count = 0;
+    let h3_count = 0;
+    let h4_count = 0;
+    let h5_count = 0;
+
+    const toRoman = (num: number) => {
+      const lookup: { [key: string]: number } = { M: 1000, CM: 900, D: 500, CD: 400, C: 100, XC: 90, L: 50, XL: 40, X: 10, IX: 9, V: 5, IV: 4, I: 1 };
+      let roman = '', i;
+      for (i in lookup) {
+        while (num >= lookup[i]) {
+          roman += i;
+          num -= lookup[i];
+        }
+      }
+      return roman;
+    }
+
+    const flushPage = () => {
+      if (currentPage.length > 0) {
+        pages.push([...currentPage]);
+        currentPage = [];
+        currentH = 0;
+      }
+    };
+
+    const addToPage = (element: React.ReactNode, heightCm: number, forceNewPage: boolean = false) => {
+      if (forceNewPage) {
+        flushPage();
+      }
+      // Buffer cực nhỏ 0.01cm vì đã đo chính xác
+      else if (currentH + heightCm > pageHeight - 0.01 && currentPage.length > 0) {
+        flushPage();
+      }
+      currentPage.push(element);
+      currentH += heightCm;
+    };
+
+    // Hàm tính toán số dòng chính xác của đoạn văn
+    const calculateLines = (text: string, isFirstLineIndented: boolean): string[] => {
+      if (!ctx) return [text]; // Fallback nếu không có canvas
+
+      const words = text.split(' ');
+      if (words.length === 0 || text.trim() === '') return [''];
+
+      const lines: string[] = [];
+      let currentLine = words[0];
+
+      // Dòng đầu tiên bị thụt lề nếu isFirstLineIndented là true
+      let currentMaxWidth = isFirstLineIndented ? (contentWidthPx - indentPx) : contentWidthPx;
+      if (currentMaxWidth <= 0) currentMaxWidth = contentWidthPx; // Fallback for extreme indent
+
+      // Áp dụng hệ số nén/giãn chữ
+      const density = settings.text_density || 1.0;
+
+      for (let i = 1; i < words.length; i++) {
+        const word = words[i];
+        const testLine = currentLine + " " + word;
+        // Nhân độ rộng đo được với hệ số density
+        // Nếu density > 1 (tăng độ dày), width sẽ lớn hơn -> xuống dòng sớm hơn
+        const width = ctx.measureText(testLine).width * density;
+
+        if (width < currentMaxWidth) {
+          currentLine = testLine;
+        } else {
+          lines.push(currentLine);
+          currentLine = word;
+          // Các dòng sau không thụt lề
+          currentMaxWidth = contentWidthPx;
+        }
+      }
+      lines.push(currentLine);
+      return lines;
+    };
+
+    // Xử lý đoạn văn dựa trên số dòng đã tính
+    const processParagraph = (text: string, keyPrefix: string, sourceLine: number) => {
+      const lines = calculateLines(text, true); // First line is indented
+      const totalLines = lines.length;
+
+      let remainingH = pageHeight - currentH;
+      let linesFit = Math.floor(remainingH / lineHeightCm);
+
+      if (linesFit >= totalLines) {
+        // Đủ chỗ cho cả đoạn
+        const totalH = totalLines * lineHeightCm + paraMarginBottom;
+        // Kiểm tra lại lần cuối xem có đủ chỗ cho cả margin không
+        if (totalH <= remainingH || remainingH < lineHeightCm) {
+          addToPage(
+            <div key={`${keyPrefix}-full`} data-source-line={sourceLine} className="mb-0" style={{
+              textIndent: `${settings.indent}cm`,
+              textAlign: 'justify',
+              marginBottom: `${paraMarginBottom}cm`,
+              lineHeight: settings.line_spacing
+            }}>
+              {parseMarkdown(text)}
+            </div>,
+            totalH,
+            remainingH < lineHeightCm
+          );
+          return;
+        }
+      }
+
+      // Không đủ chỗ, phải cắt
+      // Nếu không còn dòng nào vừa (linesFit <= 0), sang trang mới
+      if (linesFit <= 0) {
+        flushPage();
+        // Gọi lại đệ quy ở trang mới
+        processParagraph(text, keyPrefix + "-retry", sourceLine);
+        return;
+      }
+
+      // Cắt số dòng vừa đủ
+      // Lưu ý: Dòng cuối cùng của trang không cần margin bottom (vì nó bị cắt)
+      const part1Lines = lines.slice(0, linesFit);
+      const part2Lines = lines.slice(linesFit);
+
+      const part1Text = part1Lines.join(' ');
+      // const part2Text = part2Lines.join(' '); // Not directly used here
+
+      // Render phần 1
+      currentPage.push(
+        <div key={`${keyPrefix}-part1`} data-source-line={sourceLine} className="mb-0" style={{
+          textIndent: `${settings.indent}cm`,
+          textAlign: 'justify',
+          lineHeight: settings.line_spacing,
+          marginBottom: 0 // Không margin vì bị cắt
+        }}>
+          {parseMarkdown(part1Text)}
+        </div>
+      );
+      currentH += linesFit * lineHeightCm;
+
+      flushPage();
+
+      // Xử lý phần còn lại (part 2)
+      // Phần 2 là tiếp theo của đoạn văn, nên dòng đầu của nó KHÔNG thụt lề
+      // Ta cần một hàm phụ hoặc xử lý riêng cho phần tiếp theo.
+      processParagraphContinuation(part2Lines.join(' '), keyPrefix + "-part2");
+    };
+
+    const processParagraphContinuation = (text: string, keyPrefix: string) => {
+      if (text.trim() === '') return;
+
+      const lines = calculateLines(text, false); // No indentation for continuation
+      const totalLines = lines.length;
+
+      let remainingH = pageHeight - currentH;
+      let linesFit = Math.floor(remainingH / lineHeightCm);
+
+      if (linesFit >= totalLines) {
+        const totalH = totalLines * lineHeightCm + paraMarginBottom;
+        addToPage(
+          <p key={`${keyPrefix} -end`} className="mb-0" style={{
+            textIndent: 0, // Không thụt lề
+            textAlign: 'justify',
+            marginBottom: `${paraMarginBottom} cm`,
+            lineHeight: settings.line_spacing
+          }}>
+            {parseMarkdown(text)}
+          </p>,
+          totalH
+        );
+        return;
+      }
+
+      if (linesFit <= 0) {
+        flushPage();
+        processParagraphContinuation(text, keyPrefix + "-retry");
+        return;
+      }
+
+      const part1Lines = lines.slice(0, linesFit);
+      const part2Lines = lines.slice(linesFit);
+
+      currentPage.push(
+        <p key={`${keyPrefix} -cont`} className="mb-0" style={{
+          textIndent: 0,
+          textAlign: 'justify',
+          lineHeight: settings.line_spacing,
+          marginBottom: 0
+        }}>
+          {parseMarkdown(part1Lines.join(' '))}
+        </p>
+      );
+      currentH += linesFit * lineHeightCm;
+      flushPage();
+      processParagraphContinuation(part2Lines.join(' '), keyPrefix + "-next");
+    };
+
     let tableBuffer: string[] = [];
     let inTable = false;
 
@@ -352,55 +767,198 @@ Viết nội dung đồ án của bạn ở đây...
         continue;
       } else if (inTable) {
         inTable = false;
-        elements.push(renderTable(tableBuffer, i));
+        const tableEl = renderTable(tableBuffer, i);
+        if (tableEl) {
+          const rows = tableBuffer.length;
+          const h = rows * 0.8 + 1;
+          addToPage(tableEl, h);
+        }
         tableBuffer = [];
       }
 
       if (line.startsWith('# ')) {
-        elements.push(<h1 key={i} className="text-center font-bold uppercase mt-6 mb-6" style={{ fontSize: `${settings.h1_size} pt` }}>{line.substring(2)}</h1>);
-      } else if (line.startsWith('## ')) {
-        elements.push(<h2 key={i} className="text-left font-bold mt-4 mb-3" style={{ fontSize: `${settings.h2_size} pt` }}>{line.substring(3)}</h2>);
-      } else if (line.startsWith('### ')) {
-        elements.push(<h3 key={i} className="text-left font-bold italic mt-4 mb-3" style={{ fontSize: `${settings.h3_size} pt` }}>{line.substring(4)}</h3>);
+        h1_count++; h2_count = 0; h3_count = 0; h4_count = 0;
+        let title = line.substring(2).toUpperCase();
+        let displayTitle: React.ReactNode = title;
+
+        if (settings.auto_numbering) {
+          const prefixText = settings.h1_prefix ? `${settings.h1_prefix} ${toRoman(h1_count)} ` : `${toRoman(h1_count)} `;
+
+          if (settings.h1_split) {
+            // Tách dòng: CHƯƠNG I <br/> TÊN
+            displayTitle = (
+              <>
+                {prefixText}
+                <br />
+                {title}
+              </>
+            );
+          } else {
+            // Cùng dòng: CHƯƠNG I: TÊN
+            displayTitle = `${prefixText}: ${title} `;
+          }
+        }
+
+        // Tính chiều cao: Nếu tách dòng thì cao hơn
+        const lines = settings.h1_split ? 2 : 1;
+        const h = (settings.h1_size * PT_TO_CM * 1.5 * lines) + 2.0;
+
+        addToPage(<h1 key={i} data-source-line={i} className="text-center font-bold uppercase mt-6 mb-6" style={{ fontSize: `${settings.h1_size}pt` }}>{displayTitle}</h1>, h, h1_count > 1);
       }
-      else if (line.startsWith('[Hình') && line.endsWith(']')) {
-        const match = line.match(/\[(Hình \d+\.\d+): (.*)\]/);
+      else if (line.startsWith('## ')) {
+        h2_count++; h3_count = 0; h4_count = 0;
+        let title = line.substring(3);
+        if (settings.auto_numbering) {
+          // Nếu hierarchical_numbering = true -> 1.1, ngược lại -> 1
+          const prefix = settings.hierarchical_numbering ? `${h1_count}.${h2_count}.` : `${h2_count}.`;
+          title = `${prefix} ${title} `;
+        }
+        const h = (settings.h2_size * PT_TO_CM * 1.5) + 1.0;
+        addToPage(<h2 key={i} data-source-line={i} className="text-left font-bold mt-4 mb-3" style={{ fontSize: `${settings.h2_size}pt` }}>{title}</h2>, h);
+      }
+      else if (line.startsWith('### ')) {
+        h3_count++; h4_count = 0;
+        let title = line.substring(4);
+        if (settings.auto_numbering) {
+          const prefix = settings.hierarchical_numbering ? `${h1_count}.${h2_count}.${h3_count}.` : `${h2_count}.${h3_count}.`;
+          title = `${prefix} ${title} `;
+        }
+        const h = (settings.h3_size * PT_TO_CM * 1.5) + 1.0;
+        addToPage(<h3 key={i} data-source-line={i} className="text-left font-bold italic mt-4 mb-3" style={{ fontSize: `${settings.h3_size}pt` }}>{title}</h3>, h);
+      }
+      else if (line.startsWith('#### ')) {
+        h4_count++; h5_count = 0;
+        let title = line.substring(5);
+        if (settings.auto_numbering) {
+          const prefix = settings.hierarchical_numbering ? `${h1_count}.${h2_count}.${h3_count}.${h4_count}.` : `${h2_count}.${h3_count}.${h4_count}.`;
+          title = `${prefix} ${title} `;
+        }
+        const h = (settings.font_size * PT_TO_CM * 1.5) + 1.0;
+        // Chuẩn đồ án: H4 thường là in nghiêng (không đậm)
+        addToPage(<h4 key={i} data-source-line={i} className="text-left italic mt-3 mb-2" style={{ fontSize: `${settings.font_size}pt` }}>{title}</h4>, h);
+      }
+      else if (line.startsWith('##### ')) {
+        h5_count++;
+        let title = line.substring(6);
+        if (settings.auto_numbering) {
+          // H5 thường dùng a, b, c hoặc 1.1.1.1.1
+          // Để nhất quán, ta dùng số.
+          const prefix = settings.hierarchical_numbering ? `${h1_count}.${h2_count}.${h3_count}.${h4_count}.${h5_count}.` : `${h2_count}.${h3_count}.${h4_count}.${h5_count}.`;
+          title = `${prefix} ${title} `;
+        }
+        const h = (settings.font_size * PT_TO_CM * 1.5) + 1.0;
+        // Chuẩn đồ án: H5 in nghiêng, có thể thụt đầu dòng
+        addToPage(<h5 key={i} data-source-line={i} className="text-left italic mt-2 mb-2 ml-4" style={{ fontSize: `${settings.font_size}pt` }}>{title}</h5>, h);
+      }
+      else if (line.trim().startsWith('[Hình') && line.trim().endsWith(']')) {
+        const match = line.trim().match(/\[\s*(Hình \d+\.\d+)\s*:\s*(.*)\s*\]/);
         if (match) {
-          const figNum = match[1];
-          const fig = figures.find(f => f.number === figNum);
-          elements.push(
-            <div key={i} className="text-center my-6">
+          const figNum = match[1].trim(); // Trim số hình lấy được từ regex
+
+          // Tìm kiếm linh hoạt hơn: so sánh sau khi trim và bỏ khoảng trắng thừa
+          const fig = figures.find(f => f.number.trim() === figNum || f.number.replace(/\s+/g, '') === figNum.replace(/\s+/g, ''));
+
+          const imgH = (fig && fig.width) ? (fig.width * 0.75) : 8;
+          const totalH = imgH + 1.5;
+
+          addToPage(
+            <div key={i} data-source-line={i} className="text-center my-6">
               {fig && fig.url ? (
                 <img
                   src={fig.url}
                   alt={match[2]}
                   className="mx-auto object-contain"
-                  style={{ width: fig.width ? `${fig.width} cm` : '16cm', maxHeight: '15cm' }}
+                  style={{ width: fig.width ? `${fig.width}cm` : '16cm', maxHeight: '15cm' }}
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                    e.currentTarget.nextElementSibling?.classList.remove('hidden');
+                    console.error("Image load error:", fig.url);
+                  }}
                 />
               ) : (
-                <div className="w-full h-32 bg-slate-200 flex items-center justify-center text-slate-500 italic">Hình ảnh chưa upload</div>
+                <div className="w-full h-32 bg-slate-200 flex items-center justify-center text-slate-500 italic">
+                  Hình ảnh chưa upload hoặc URL lỗi
+                </div>
               )}
-              <p className="italic mt-3 font-medium">{figNum}: {match[2]}</p>
-            </div>
+              <p className="italic mt-3 font-medium text-black">{figNum}: {match[2]}</p>
+            </div>,
+            totalH
           );
         }
       }
       else if (line.startsWith('Bảng') && line.includes(':')) {
-        elements.push(<p key={i} className="text-center font-bold my-3">{line}</p>);
+        addToPage(<p key={i} data-source-line={i} className="text-center font-bold my-3">{line}</p>, 1.0);
+      }
+      else if (line.trim().match(/^(\-{1,3}|\*{1,3})\s/)) {
+        // Bullet points with levels: - , -- , ---
+        const match = line.trim().match(/^(\-{1,3}|\*{1,3})\s/);
+        const prefix = match ? match[1] : '-';
+        const level = prefix.length; // 1, 2, or 3
+        const content = line.trim().substring(prefix.length).trim();
+
+        // Base indent from settings + extra indent for levels
+        // Chuẩn đồ án: Cấp 1 thụt bằng đoạn văn (settings.indent), các cấp sau thụt thêm 0.75cm
+        const levelIndent = (level - 1) * 0.75;
+        const totalIndent = settings.indent + levelIndent;
+
+        const h = lineHeightCm;
+        addToPage(
+          <div key={i} data-source-line={i} className="flex" style={{
+            paddingLeft: `${totalIndent}cm`,
+            marginBottom: '0.2cm',
+            lineHeight: settings.line_spacing
+          }}>
+            <span className="mr-2 font-bold" style={{ minWidth: '0.5cm', textAlign: 'right' }}>
+              {level === 1 ? '-' : level === 2 ? '+' : '-'}
+            </span>
+            <span>{parseMarkdown(content)}</span>
+          </div>,
+          h
+        );
       }
       else if (line.trim() === '') {
-        elements.push(<br key={i} />);
+        addToPage(<br key={i} data-source-line={i} />, lineHeightCm);
       }
       else {
-        elements.push(<p key={i} className="mb-2" style={{ textIndent: `${settings.indent} cm` }}>{line}</p>);
+        processParagraph(line, `p-${i}`, i);
       }
     }
 
     if (inTable && tableBuffer.length > 0) {
-      elements.push(renderTable(tableBuffer, lines.length));
+      const tableEl = renderTable(tableBuffer, lines.length); // Table uses last line index for now
+      if (tableEl) {
+        const rows = tableBuffer.length;
+        const h = rows * 0.8 + 1;
+        // Wrap table in div with data-source-line
+        addToPage(<div data-source-line={lines.length - rows}>{tableEl}</div>, h);
+      }
     }
 
-    return elements;
+    if (currentPage.length > 0) flushPage();
+
+    return pages.map((pageContent, idx) => (
+      <div
+        key={idx}
+        className="bg-white shadow-lg w-[21cm] min-h-[29.7cm] mb-8 relative shrink-0 transition-all origin-top"
+        onClick={handlePreviewClick}
+        style={{
+          fontFamily: `"${settings.font_family}", Times, serif`,
+          fontSize: `${settings.font_size}pt`,
+          lineHeight: settings.line_spacing,
+          paddingTop: `${settings.margin_top}cm`,
+          paddingBottom: `${settings.margin_bottom}cm`,
+          paddingLeft: `${settings.margin_left}cm`,
+          paddingRight: `${settings.margin_right}cm`,
+          transform: `scale(${zoomLevel / 100})`,
+          marginBottom: `${(29.7 * (zoomLevel / 100 - 1)) + 2}cm` // Adjust margin for scale
+        }}
+      >
+        <div className="absolute top-2 right-[-30px] text-xs text-slate-400 font-bold" style={{
+          transform: `scale(${100 / zoomLevel})`
+        }}>P.{idx + 1}</div >
+        {pageContent}
+      </div>
+    ));
   };
 
   const renderTable = (lines: string[], keyPrefix: number) => {
@@ -466,7 +1024,7 @@ Viết nội dung đồ án của bạn ở đây...
       try {
         const json = JSON.parse(event.target?.result as string);
         if (json.content !== undefined) setContent(json.content);
-        if (json.settings) setSettings(json.settings);
+        if (json.settings) setSettings(prev => ({ ...prev, ...json.settings }));
         if (json.figures) setFigures(json.figures);
         if (json.citations) setCitations(json.citations);
         alert("Đã tải dự án thành công!");
@@ -582,6 +1140,29 @@ Viết nội dung đồ án của bạn ở đây...
         </div>
       </Dialog>
 
+      {/* JSON Import Dialog */}
+      <Dialog title="Nhập trích dẫn từ JSON" isOpen={showJsonImportDialog} onClose={() => setShowJsonImportDialog(false)}>
+        <div className="space-y-4">
+          <p className="text-sm text-slate-500">
+            Dán mảng JSON chứa các trích dẫn vào đây. Ví dụ:
+            <br />
+            <code className="bg-slate-100 p-1 rounded text-xs block mt-1">
+              [{`{"author": "Nguyen Van A", "year": "2023", "title": "Tên sách", "publisher": "NXB"}`}]
+            </code>
+          </p>
+          <textarea
+            className="w-full h-48 border rounded p-2 text-sm font-mono"
+            placeholder='[{"author": "...", ...}]'
+            value={jsonImportText}
+            onChange={(e) => setJsonImportText(e.target.value)}
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setShowJsonImportDialog(false)}>Hủy</Button>
+            <Button variant="default" onClick={handleJsonImport}>Nhập</Button>
+          </div>
+        </div>
+      </Dialog>
+
       {/* SIDEBAR */}
       <aside className="w-64 bg-white border-r border-slate-200 flex flex-col shrink-0">
         <div className="p-6 border-b border-slate-100">
@@ -659,6 +1240,9 @@ Viết nội dung đồ án của bạn ở đây...
                 <Button onClick={() => insertText("**", "**")} title="Bold"><Bold className="w-4 h-4" /></Button>
                 <Button onClick={() => insertText("*", "*")} title="Italic"><Italic className="w-4 h-4" /></Button>
                 <Button onClick={() => insertText("<u>", "</u>")} title="Underline"><Underline className="w-4 h-4" /></Button>
+                <Button onClick={() => insertText("- ")} title="Bullet List"><List className="w-4 h-4" /></Button>
+                <Button onClick={() => insertText("$", "$")} title="Math Formula"><Sigma className="w-4 h-4" /></Button>
+                <Button onClick={renumberAssets} title="Cập nhật STT Hình/Bảng"><RefreshCw className="w-4 h-4" /></Button>
 
                 <Separator />
 
@@ -695,7 +1279,26 @@ Viết nội dung đồ án của bạn ở đây...
                 </Popover.Root>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-1">
+                  <span className="text-xs font-bold text-slate-500">ZOOM</span>
+                  <input
+                    type="range"
+                    min="50"
+                    max="150"
+                    value={zoomLevel}
+                    onChange={(e) => setZoomLevel(parseInt(e.target.value))}
+                    className="w-24 h-1 bg-slate-300 rounded-lg appearance-none cursor-pointer"
+                  />
+                  <span className="text-xs font-mono w-8 text-right">{zoomLevel}%</span>
+                </div>
+                <button
+                  onClick={handleExport}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors shadow-sm"
+                >
+                  <FileDown size={18} />
+                  Xuất Word (.docx)
+                </button>
                 <Button variant={isPreviewOpen ? "secondary" : "ghost"} onClick={() => setIsPreviewOpen(!isPreviewOpen)} title="Bật/Tắt Preview">
                   <ChevronRight className={clsx("w-4 h-4 transition-transform", isPreviewOpen && "rotate-180")} />
                 </Button>
@@ -707,29 +1310,17 @@ Viết nội dung đồ án của bạn ở đây...
               <div className="flex-1 relative">
                 <textarea
                   ref={textareaRef}
-                  className="w-full h-full p-8 resize-none focus:outline-none font-mono text-base leading-relaxed bg-white text-slate-800"
+                  className="w-full h-full p-8 resize-none focus:outline-none font-sans text-base leading-relaxed bg-white text-slate-800"
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
+                  onKeyDown={handleKeyDown}
                   placeholder="Nhập nội dung đồ án..."
                 />
               </div>
 
               {isPreviewOpen && (
-                <div className="w-1/2 bg-slate-100 border-l border-slate-200 overflow-y-auto p-8 flex justify-center">
-                  <div
-                    className="bg-white shadow-lg min-h-[29.7cm] w-[21cm] p-[2.54cm] text-justify"
-                    style={{
-                      fontFamily: `"${settings.font_family}", Times, serif`,
-                      fontSize: `${settings.font_size} pt`,
-                      lineHeight: settings.line_spacing,
-                      paddingTop: `${settings.margin_top} cm`,
-                      paddingBottom: `${settings.margin_bottom} cm`,
-                      paddingLeft: `${settings.margin_left} cm`,
-                      paddingRight: `${settings.margin_right} cm`,
-                    }}
-                  >
-                    {renderPreview()}
-                  </div>
+                <div className="w-1/2 bg-slate-100 border-l border-slate-200 overflow-y-auto p-8 flex flex-col items-center">
+                  {renderPreview()}
                 </div>
               )}
             </div>
@@ -739,7 +1330,12 @@ Viết nội dung đồ án của bạn ở đây...
         {/* CITATIONS TAB */}
         {activeTab === "citations" && (
           <div className="p-8 max-w-4xl mx-auto w-full overflow-y-auto">
-            <h2 className="text-2xl font-bold mb-6">Quản lý Tài liệu Tham khảo</h2>
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold">Quản lý Tài liệu Tham khảo</h2>
+              <Button variant="outline" onClick={() => setShowJsonImportDialog(true)} className="gap-2">
+                <Code className="w-4 h-4" /> Nhập JSON
+              </Button>
+            </div>
 
             <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 mb-8">
               <h3 className="font-bold mb-4 text-lg">Thêm trích dẫn mới</h3>
@@ -778,6 +1374,7 @@ Viết nội dung đồ án của bạn ở đây...
           <div className="p-8 max-w-2xl mx-auto w-full overflow-y-auto">
             <h2 className="text-2xl font-bold mb-6">Cài đặt Trang & Font chữ</h2>
             <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 space-y-6">
+
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-medium mb-2">Font chữ</label>
@@ -787,9 +1384,63 @@ Viết nội dung đồ án của bạn ở đây...
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-2">Cỡ chữ (pt)</label>
-                  <input type="number" className="w-full border p-2 rounded" value={settings.font_size} onChange={(e) => setSettings({ ...settings, font_size: parseFloat(e.target.value) })} />
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Tiêu đề cấp 1 (Heading 1)</label>
+                  <input
+                    type="text"
+                    value={settings.h1_prefix}
+                    onChange={(e) => setSettings({ ...settings, h1_prefix: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-md text-sm"
+                    placeholder="Ví dụ: CHƯƠNG, PHẦN, BÀI..."
+                  />
+                  <p className="text-xs text-slate-500 mt-1">Để trống nếu chỉ muốn hiện số (I, II...)</p>
                 </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="auto_numbering"
+                  checked={settings.auto_numbering}
+                  onChange={(e) => setSettings({ ...settings, auto_numbering: e.target.checked })}
+                  className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                />
+                <label htmlFor="auto_numbering" className="text-sm font-medium text-slate-700">Tự động đánh số tiêu đề (I, 1.1, 1.1.1...)</label>
+              </div>
+
+              <div className="flex items-center gap-2 mt-2 ml-6">
+                <input
+                  type="checkbox"
+                  id="h1_split"
+                  checked={settings.h1_split || false}
+                  onChange={(e) => setSettings({ ...settings, h1_split: e.target.checked })}
+                  className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                  disabled={!settings.auto_numbering}
+                />
+                <label htmlFor="h1_split" className={`text-sm font-medium text-slate-700 ${!settings.auto_numbering ? 'text-slate-400' : ''}`}>
+                  Ngắt dòng tiêu đề chương (CHƯƠNG I xuống dòng TÊN)
+                </label>
+              </div>
+
+              <div className="flex items-center gap-2 mt-2 ml-6">
+                <input
+                  type="checkbox"
+                  id="hierarchical_numbering"
+                  checked={settings.hierarchical_numbering !== false} // Default true
+                  onChange={(e) => setSettings({ ...settings, hierarchical_numbering: e.target.checked })}
+                  className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                  disabled={!settings.auto_numbering}
+                />
+                <label htmlFor="hierarchical_numbering" className={`text-sm font-medium text-slate-700 ${!settings.auto_numbering ? 'text-slate-400' : ''}`}>
+                  Đánh số phân cấp (3.1, 3.1.1). Tắt để dùng (1, 1.1)
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">Cỡ chữ (pt)</label>
+                <input type="number" className="w-full border p-2 rounded" value={settings.font_size} onChange={(e) => setSettings({ ...settings, font_size: parseFloat(e.target.value) })} />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium mb-2">Lề Trái (cm)</label>
                   <input type="number" step="0.1" className="w-full border p-2 rounded" value={settings.margin_left} onChange={(e) => setSettings({ ...settings, margin_left: parseFloat(e.target.value) })} />
@@ -807,10 +1458,86 @@ Viết nội dung đồ án của bạn ở đây...
                   <input type="number" step="0.1" className="w-full border p-2 rounded" value={settings.margin_bottom} onChange={(e) => setSettings({ ...settings, margin_bottom: parseFloat(e.target.value) })} />
                 </div>
               </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">Thụt đầu dòng (cm)</label>
+                <input type="number" step="0.1" className="w-full border p-2 rounded" value={settings.indent} onChange={(e) => setSettings({ ...settings, indent: parseFloat(e.target.value) })} />
+              </div>
+
+              <div className="border-t pt-4 mt-4">
+                <h3 className="text-sm font-bold text-slate-700 mb-3">Tinh chỉnh hiển thị (Calibration)</h3>
+                <div className="space-y-4">
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <label className="text-xs font-medium text-slate-600">Độ dày chữ (Text Density)</label>
+                      <span className="text-xs text-slate-500">{settings.text_density?.toFixed(2) || "1.00"}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.8"
+                      max="1.2"
+                      step="0.01"
+                      value={settings.text_density || 1.0}
+                      onChange={(e) => setSettings({ ...settings, text_density: parseFloat(e.target.value) })}
+                      className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+                    />
+                    <p className="text-[10px] text-slate-400 mt-1">Kéo sang phải nếu Preview chứa nhiều chữ hơn Word (xuống dòng chậm hơn).</p>
+                  </div>
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <label className="text-xs font-medium text-slate-600">Giãn dòng (Line Scaling)</label>
+                      <span className="text-xs text-slate-500">{settings.line_height_scale?.toFixed(2) || "1.00"}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.9"
+                      max="1.1"
+                      step="0.01"
+                      value={settings.line_height_scale || 1.0}
+                      onChange={(e) => setSettings({ ...settings, line_height_scale: parseFloat(e.target.value) })}
+                      className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+                    />
+                    <p className="text-[10px] text-slate-400 mt-1">Kéo sang phải nếu Preview chứa nhiều dòng hơn Word (ngắt trang chậm hơn).</p>
+                  </div>
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <label className="text-xs font-medium text-slate-600">Tỷ lệ trang (Page Scale)</label>
+                      <span className="text-xs text-slate-500">{settings.page_content_scale?.toFixed(2) || "1.00"}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.9"
+                      max="1.1"
+                      step="0.01"
+                      value={settings.page_content_scale || 1.0}
+                      onChange={(e) => setSettings({ ...settings, page_content_scale: parseFloat(e.target.value) })}
+                      className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+                    />
+                    <p className="text-[10px] text-slate-400 mt-1">Giảm xuống (ví dụ 0.95) nếu trang giấy có vẻ "to hơn" Word.</p>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="hard_wrap"
+                        checked={settings.hard_wrap || false}
+                        onChange={(e) => setSettings({ ...settings, hard_wrap: e.target.checked })}
+                        className="w-4 h-4 text-red-600 rounded focus:ring-red-500"
+                      />
+                      <label htmlFor="hard_wrap" className="text-xs font-bold text-red-600">Khóa ngắt dòng (Experimental)</label>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Nếu bật: File Word sẽ bị ngắt dòng y hệt Preview (giống 100%).
+                      <br />Lưu ý: File sẽ khó chỉnh sửa hơn.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
             </div>
           </div>
         )}
-
       </main>
     </div>
   );

@@ -38,7 +38,16 @@ class Settings:
     font_size: int = 13
     line_spacing: float = 1.5
     indent: float = 1.27
+    h1_prefix: str = "CHƯƠNG"
+    auto_numbering: bool = True
     h1_size: int = 16
     h2_size: int = 14
     h3_size: int = 13
+    # Calibration
+    text_density: float = 1.0
+    line_height_scale: float = 1.0
+    page_content_scale: float = 1.0
+    hard_wrap: bool = False
+    h1_split: bool = False
+    hierarchical_numbering: bool = True
     h1_uppercase: bool = True
