@@ -718,14 +718,14 @@ Viết nội dung đồ án của bạn ở đây...
       if (linesFit >= totalLines) {
         const totalH = totalLines * lineHeightCm + paraMarginBottom;
         addToPage(
-          <p key={`${keyPrefix} -end`} className="mb-0" style={{
+          <div key={`${keyPrefix}-end`} className="mb-0" style={{
             textIndent: 0, // Không thụt lề
             textAlign: 'justify',
-            marginBottom: `${paraMarginBottom} cm`,
+            marginBottom: `${paraMarginBottom}cm`,
             lineHeight: settings.line_spacing
           }}>
             {parseMarkdown(text)}
-          </p>,
+          </div>,
           totalH
         );
         return;
@@ -741,14 +741,14 @@ Viết nội dung đồ án của bạn ở đây...
       const part2Lines = lines.slice(linesFit);
 
       currentPage.push(
-        <p key={`${keyPrefix} -cont`} className="mb-0" style={{
+        <div key={`${keyPrefix}-cont`} className="mb-0" style={{
           textIndent: 0,
           textAlign: 'justify',
           lineHeight: settings.line_spacing,
           marginBottom: 0
         }}>
           {parseMarkdown(part1Lines.join(' '))}
-        </p>
+        </div>
       );
       currentH += linesFit * lineHeightCm;
       flushPage();
