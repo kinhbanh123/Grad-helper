@@ -1,4 +1,4 @@
-# Thesis Formatter
+# Grad-project
 
 Ứng dụng hỗ trợ định dạng đồ án tốt nghiệp chuẩn, bao gồm:
 - Soạn thảo Markdown với Live Preview.
@@ -31,19 +31,10 @@ cd backend
 pip install fastapi uvicorn python-docx python-multipart
 ```
 
-### 3. Chạy ứng dụng (Khuyên dùng)
-
-Tại thư mục `grad-helper`, chạy lệnh sau để khởi động cả Frontend và Backend:
-
-```bash
-npm run dev:all
-```
-
-Truy cập ứng dụng tại: [http://localhost:3000](http://localhost:3000) (hoặc port khác tùy Next.js hiển thị).
-
+Truy cập ứng dụng tại: port khác tùy Next.js hiển thị.
 ---
 
-### Chạy thủ công từng phần (Nếu cần debug)
+### Chạy 
 
 **Terminal 1 (Backend):**
 ```bash
