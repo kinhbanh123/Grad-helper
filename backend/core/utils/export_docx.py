@@ -12,41 +12,165 @@ import re
 import traceback
 import matplotlib.pyplot as plt
 import io
+import latex2mathml.converter
+from lxml import etree
 
-def render_latex_to_image(latex_str):
+# XSLT to convert MathML to OMML (Word's equation format)
+MATHML_TO_OMML_XSLT = None
+
+def get_mathml_to_omml_xslt():
+    """Load the MathML to OMML XSLT stylesheet."""
+    global MATHML_TO_OMML_XSLT
+    if MATHML_TO_OMML_XSLT is None:
+        # This XSLT is bundled with Microsoft Office
+        # On Mac, it's typically at this location
+        xslt_paths = [
+            "/Applications/Microsoft Word.app/Contents/Resources/MML2OMML.XSL",
+            "/Applications/Microsoft Office/Microsoft Word.app/Contents/Resources/MML2OMML.XSL",
+            # Fallback for different Office versions
+            os.path.expanduser("~/Applications/Microsoft Word.app/Contents/Resources/MML2OMML.XSL"),
+        ]
+        
+        for xslt_path in xslt_paths:
+            if os.path.exists(xslt_path):
+                xslt_doc = etree.parse(xslt_path)
+                MATHML_TO_OMML_XSLT = etree.XSLT(xslt_doc)
+                print(f"Loaded MML2OMML.XSL from: {xslt_path}")
+                break
+        
+        if MATHML_TO_OMML_XSLT is None:
+            print("Warning: MML2OMML.XSL not found. LaTeX equations will use fallback image rendering.")
+    
+    return MATHML_TO_OMML_XSLT
+
+def latex_to_omml(latex_str):
+    """Convert LaTeX string to Word OMML (Office Math Markup Language)."""
+    try:
+        # Clean up the LaTeX string
+        clean_latex = latex_str.strip()
+        if clean_latex.startswith('$') and clean_latex.endswith('$'):
+            clean_latex = clean_latex[1:-1]
+        if clean_latex.startswith('$$') and clean_latex.endswith('$$'):
+            clean_latex = clean_latex[2:-2]
+        
+        # Convert LaTeX to MathML
+        mathml_str = latex2mathml.converter.convert(clean_latex)
+        
+        # Get the XSLT transformer
+        xslt = get_mathml_to_omml_xslt()
+        if xslt is None:
+            return None
+        
+        # Parse MathML and transform to OMML
+        mathml_tree = etree.fromstring(mathml_str.encode('utf-8'))
+        omml_tree = xslt(mathml_tree)
+        
+        # Get the oMath element
+        omml_element = omml_tree.getroot()
+        
+        return omml_element
+        
+    except Exception as e:
+        print(f"Error converting LaTeX to OMML: {e}")
+        traceback.print_exc()
+        return None
+
+def insert_omml_equation(paragraph, latex_str):
+    """Insert a LaTeX equation as native Word OMML into a paragraph."""
+    omml = latex_to_omml(latex_str)
+    if omml is not None:
+        # Create a run and append the OMML
+        run = paragraph.add_run()
+        run._r.append(omml)
+        return True
+    return False
+
+def render_latex_to_image(latex_str, font_size_pt=12, is_display=False):
     """Renders LaTeX string to an image stream using matplotlib."""
     try:
-        fig = plt.figure(figsize=(0.1, 0.1)) # Dummy size, will be adjusted
+        # Configure Matplotlib to use STIX (Times-like) for Math
+        plt.rcParams['mathtext.fontset'] = 'stix'
+        plt.rcParams['font.family'] = 'Times New Roman'
         
-        # Clean up: matplotlib expects $...$ for math.
-        render_str = latex_str
-        if not render_str.startswith('$'):
-            render_str = f"${render_str}$"
+        # High DPI for quality
+        dpi = 600
+        
+        # Create figure
+        fig = plt.figure(figsize=(8, 2), dpi=dpi)
+        fig.patch.set_alpha(0)
+        
+        # Clean up LaTeX
+        render_str = latex_str.strip()
+        if render_str.startswith('$$') and render_str.endswith('$$'):
+            render_str = render_str[2:-2]
+        elif render_str.startswith('$') and render_str.endswith('$'):
+            render_str = render_str[1:-1]
+        
+        # Check for unsupported LaTeX environments - return None to trigger fallback
+        unsupported_patterns = [
+            r'\\begin\{', r'\\end\{',  # environments like cases, matrix, etc.
+            r'\\underbrace', r'\\overbrace',  # braces
+            r'\\xrightarrow', r'\\xleftarrow',  # extensible arrows
+            r'\\substack',  # stacked subscripts
+            r'\\overset', r'\\underset',  # over/under set
+        ]
+        for pattern in unsupported_patterns:
+            if re.search(pattern, render_str):
+                print(f"Unsupported LaTeX pattern detected: {pattern} in '{render_str[:50]}...'")
+                plt.close(fig)
+                return None, 0, 0, 0
             
-        text = fig.text(0.5, 0.5, render_str, fontsize=12, ha='center', va='center')
+        # Fix common LaTeX commands
+        render_str = re.sub(r'\\displaystyle\s*', '', render_str)
+        render_str = re.sub(r'\\textstyle\s*', '', render_str)
+        render_str = re.sub(r'\\ge(?![a-zA-Z])', r'\\geq', render_str)
+        render_str = re.sub(r'\\le(?![a-zA-Z])', r'\\leq', render_str)
+        render_str = re.sub(r'\\text\{', r'\\mathrm{', render_str)
+        render_str = render_str.replace(r'\{', r'\lbrace ')
+        render_str = render_str.replace(r'\}', r'\rbrace ')
+        render_str = re.sub(r'\\arg(?![a-zA-Z])', r'\\mathrm{arg}', render_str)
+        render_str = re.sub(r'\\max(?![a-zA-Z])', r'\\mathrm{max}', render_str)
+        render_str = re.sub(r'\\min(?![a-zA-Z])', r'\\mathrm{min}', render_str)
         
-        # Get the bounding box of the text
+        render_str = f"${render_str}$"
+            
+        # Adjust font size to match document text
+        effective_font_size = font_size_pt * 0.75  # Inline math same size as text
+        if is_display:
+            effective_font_size = font_size_pt * 0.70  # Display math slightly smaller
+            
+        # Draw text with baseline alignment for accurate descent calculation
+        text = fig.text(0.5, 0.5, render_str, fontsize=effective_font_size, ha='center', va='baseline')
+        
+        # Get bounding box
         renderer = fig.canvas.get_renderer()
         bbox = text.get_window_extent(renderer=renderer)
         
-        # Resize figure to fit text
-        # Convert bbox pixels to inches (dpi default is 100)
-        dpi = 100
-        fig.set_size_inches(bbox.width / dpi + 0.1, bbox.height / dpi + 0.1)
+        # Calculate dimensions
+        width_in = bbox.width / dpi
+        height_in = bbox.height / dpi
         
-        # Re-position text
-        text.set_position((0.5, 0.5))
+        # Calculate descent (distance from baseline to bottom)
+        # Baseline is at 0.5 * fig_height_in_pixels
+        fig_height_px = fig.get_window_extent().height
+        baseline_y = 0.5 * fig_height_px
+        descent_px = baseline_y - bbox.y0
+        descent_in = descent_px / dpi
         
-        # Save to buffer
+        # Save with tight bounding box to eliminate whitespace
         buf = io.BytesIO()
-        fig.savefig(buf, format='png', dpi=300, transparent=True, bbox_inches='tight', pad_inches=0.02)
+        fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight', pad_inches=0.01, transparent=True)
         buf.seek(0)
         plt.close(fig)
-        return buf
+        
+        return buf, height_in, width_in, descent_in
+        
     except Exception as e:
         print(f"Error rendering LaTeX: {e}")
-        plt.close(fig)
-        return None
+        traceback.print_exc()
+        try: plt.close(fig)
+        except: pass
+        return None, 0, 0, 0
 
 def create_element(name):
     return OxmlElement(name)
@@ -93,7 +217,22 @@ def set_font_complex(font, font_name, font_size=None, bold=False, italic=False, 
     rFonts.set(qn('w:ascii'), font_name)
     rFonts.set(qn('w:hAnsi'), font_name)
     rFonts.set(qn('w:eastAsia'), font_name)
+    rFonts.set(qn('w:eastAsia'), font_name)
     rFonts.set(qn('w:cs'), font_name)
+
+def set_run_position(run, pt_val):
+    """
+    Set the vertical position of a run (raise/lower).
+    pt_val: Value in points. Positive raises, negative lowers.
+    Word w:position uses half-points (1/144 inch).
+    """
+    if pt_val == 0: return
+    val = int(pt_val * 2)
+    rPr = run._element.get_or_add_rPr()
+    # w:position element
+    position = OxmlElement('w:position')
+    position.set(qn('w:val'), str(val))
+    rPr.append(position)
 
 def setup_styles(doc, settings: Settings):
     """Configure document styles to match thesis requirements"""
@@ -405,20 +544,43 @@ def export_to_docx(file_path: str, text: str, settings: Settings,
                 
                 for run in heading.runs:
                     set_font_complex(run.font, settings.font_family, settings.font_size, bold=True, italic=True, color=RGBColor(0, 0, 0))
+                    set_font_complex(run.font, settings.font_family, settings.font_size, bold=True, italic=True, color=RGBColor(0, 0, 0))
             
-            # Bullet points: - , -- , ---
-            elif re.match(r'^(\-{1,3}|\*{1,3})\s', line):
-                match = re.match(r'^(\-{1,3}|\*{1,3})\s', line)
+            # Heading 5
+            elif line.startswith("##### "):
+                h5_count += 1
+                raw_title = line[6:].strip()
+                
+                if settings.auto_numbering:
+                    prefix = f"{h1_count}.{h2_count}.{h3_count}.{h4_count}.{h5_count}." if settings.hierarchical_numbering else f"{h2_count}.{h3_count}.{h4_count}.{h5_count}."
+                    full_title = f"{prefix} {raw_title}"
+                else:
+                    full_title = raw_title
+                
+                try:
+                    heading = doc.add_paragraph(full_title, style='Heading 5')
+                except:
+                    heading = doc.add_paragraph(full_title, style='Normal')
+                
+                for run in heading.runs:
+                    set_font_complex(run.font, settings.font_family, settings.font_size, italic=True, color=RGBColor(0, 0, 0))
+
+            # Bullet points: - , -- , ---, or •, ●
+            elif re.match(r'^(\-{1,3}|\*{1,3}|•|●)\s', line):
+                match = re.match(r'^(\-{1,3}|\*{1,3}|•|●)\s', line)
                 prefix = match.group(1)
                 level = len(prefix)
                 content = line[len(prefix)+1:].strip()
                 
-                # Chuẩn đồ án Việt Nam: dùng gạch đầu dòng (-) và dấu cộng (+)
-                bullet_char = "-"
+                # Chuẩn đồ án Việt Nam: dùng gạch đầu dòng (–) và dấu cộng (+)
+                # Sử dụng En Dash (–) thay vì Hyphen (-) cho đẹp hơn
+                bullet_char = "\u2013" # En Dash
+                print(f"DEBUG: Processing bullet level {level}, char: {bullet_char}")
+                
                 if level == 2:
                     bullet_char = "+"
                 elif level == 3:
-                    bullet_char = "-"
+                    bullet_char = "\u2013"
                 
                 # Manual bullet implementation using Normal style + Indent
                 p = doc.add_paragraph(style='Normal')
@@ -433,11 +595,12 @@ def export_to_docx(file_path: str, text: str, settings: Settings,
                 # Left Indent = Total Indent + Hanging Amount
                 # First Line Indent = -Hanging Amount
                 # This makes the bullet sit at Total Indent, and text wrap nicely.
-                hanging = 0.63 # cm (approx 0.25 inch)
+                hanging = 0.5 # cm (reduced from 0.63 for tighter look)
                 
                 p_fmt = p.paragraph_format
                 p_fmt.left_indent = Cm(total_indent + hanging)
                 p_fmt.first_line_indent = Cm(-hanging)
+                p_fmt.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
                 p_fmt.tab_stops.add_tab_stop(Cm(total_indent + hanging))
                 
                 # Add bullet char and tab
@@ -459,10 +622,14 @@ def export_to_docx(file_path: str, text: str, settings: Settings,
                         if part.startswith('$$'): inner_tex = part[2:-2]
                         elif part.startswith('$'): inner_tex = part[1:-1]
                         
-                        image_stream = render_latex_to_image(inner_tex)
+                        image_stream, h_in, w_in, descent_in = render_latex_to_image(inner_tex, font_size_pt=settings.font_size)
                         if image_stream:
                             run = p.add_run()
-                            run.add_picture(image_stream, height=Cm(0.5))
+                            # Convert inches to docx Length (Cm or Inches)
+                            run.add_picture(image_stream, height=Cm(h_in * 2.54))
+                            # Lower the image by descent amount to align baseline
+                            # descent_in is in inches. 1 inch = 72 points.
+                            set_run_position(run, -descent_in * 72)
                         else:
                             run = p.add_run(part)
                             set_font_complex(run.font, settings.font_family, settings.font_size, color=RGBColor(0, 0, 0))
@@ -536,7 +703,8 @@ def export_to_docx(file_path: str, text: str, settings: Settings,
                                     
                                     # Add caption
                                     caption_text = f"{fig_num}: {caption}"
-                                    caption_p = doc.add_paragraph(caption_text, style='Caption')
+                                    # Use 'Figure Caption' style which is defined as Black/Italic
+                                    caption_p = doc.add_paragraph(caption_text, style='Figure Caption')
                                     caption_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                                     
                                 else:
@@ -564,25 +732,54 @@ def export_to_docx(file_path: str, text: str, settings: Settings,
                         
                         # LaTeX handling
                         if part.startswith('$') and part.endswith('$'):
-                            latex_content = part
-                            # Handle display math $$...$$
+                            # Handle display math $$...$$ vs inline $...$
                             is_display = part.startswith('$$')
                             if is_display:
-                                inner_tex = part[2:-2]
-                                latex_content = inner_tex 
+                                latex_content = part[2:-2]
+                            else:
+                                latex_content = part[1:-1]
                             
-                            image_stream = render_latex_to_image(latex_content)
+                            # Try native OMML first (best quality)
+                            if insert_omml_equation(p, latex_content):
+                                continue
+                            
+                            # Fallback to image rendering
+                            image_stream, h_in, w_in, descent_in = render_latex_to_image(latex_content, font_size_pt=settings.font_size, is_display=is_display)
                             if image_stream:
+                                scaled_height = h_in * 2.54
                                 if is_display:
-                                    run = p.add_run()
-                                    run.add_picture(image_stream, height=Cm(0.8))
+                                    # Display math: create new centered paragraph
+                                    math_p = doc.add_paragraph()
+                                    math_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                    math_p.paragraph_format.first_line_indent = Cm(0)
+                                    math_p.paragraph_format.space_before = Pt(6)
+                                    math_p.paragraph_format.space_after = Pt(6)
+                                    run = math_p.add_run()
+                                    run.add_picture(image_stream, height=Cm(scaled_height))
+                                    # Create new paragraph for remaining text
+                                    p = doc.add_paragraph(style='Normal')
                                 else:
                                     run = p.add_run()
-                                    run.add_picture(image_stream, height=Cm(0.5))
+                                    run.add_picture(image_stream, height=Cm(scaled_height))
+                                    # Adjust baseline shift proportionally
+                                    set_run_position(run, -descent_in * 72)
                             else:
-                                # Fallback
-                                run = p.add_run(part)
-                                set_font_complex(run.font, settings.font_family, settings.font_size, color=RGBColor(0, 0, 0))
+                                # Fallback: Show placeholder for complex formulas
+                                if is_display:
+                                    # Create centered paragraph with placeholder
+                                    math_p = doc.add_paragraph()
+                                    math_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                    math_p.paragraph_format.first_line_indent = Cm(0)
+                                    math_p.paragraph_format.space_before = Pt(6)
+                                    math_p.paragraph_format.space_after = Pt(6)
+                                    run = math_p.add_run(f"[Công thức phức tạp - cần chèn thủ công]")
+                                    set_font_complex(run.font, settings.font_family, settings.font_size, italic=True, color=RGBColor(128, 128, 128))
+                                    # Create new paragraph for remaining text
+                                    p = doc.add_paragraph(style='Normal')
+                                else:
+                                    # Inline: just show in italic gray
+                                    run = p.add_run(f"[{latex_content}]")
+                                    set_font_complex(run.font, settings.font_family, settings.font_size, italic=True, color=RGBColor(128, 128, 128))
                             continue
 
                         run = p.add_run()
