@@ -9,10 +9,11 @@ import { EditorToolbar } from "./_components/editor/EditorToolbar";
 import { CitationsTab } from "./_components/tabs/CitationsTab";
 import { SettingsTab } from "./_components/tabs/SettingsTab";
 import { SmartZoneTab } from "./_components/tabs/SmartZoneTab";
+import { AbbreviationsTab, Abbreviation } from "./_components/tabs/AbbreviationsTab";
 import { PreviewRenderer } from "./_components/preview/PreviewRenderer";
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<"editor" | "citations" | "settings" | "smart-zone">("editor");
+  const [activeTab, setActiveTab] = useState<"editor" | "citations" | "settings" | "smart-zone" | "abbreviations">("editor");
   const [content, setContent] = useState<string>("");
   const [isPreviewOpen, setIsPreviewOpen] = useState(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -50,6 +51,7 @@ export default function Home() {
 
   const [figures, setFigures] = useState<any[]>([]);
   const [citations, setCitations] = useState<any[]>([]);
+  const [abbreviations, setAbbreviations] = useState<Abbreviation[]>([]);
 
   // Image Upload State
   const [uploading, setUploading] = useState(false);
@@ -326,7 +328,7 @@ Viết nội dung đồ án của bạn ở đây...
 
     setContent(updatedContent);
     setFigures(newFigures);
-    alert(`Đã cập nhật: ${figCounter} hình, ${tableCounter} bảng.\n(Danh sách hình ảnh đã được làm mới)`);
+    // Renumber hoàn tất - không cần thông báo
   };
 
   const handleJsonImport = () => {
@@ -438,7 +440,8 @@ Viết nội dung đồ án của bạn ở đây...
           settings,
           figures,
           tables: [],
-          citations
+          citations,
+          abbreviations
         })
       });
 
@@ -467,6 +470,7 @@ Viết nội dung đồ án của bạn ở đây...
       settings,
       figures,
       citations,
+      abbreviations,
       timestamp: new Date().toISOString()
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -497,6 +501,7 @@ Viết nội dung đồ án của bạn ở đây...
         if (json.settings) setSettings(prev => ({ ...prev, ...json.settings }));
         if (json.figures) setFigures(json.figures);
         if (json.citations) setCitations(json.citations);
+        if (json.abbreviations) setAbbreviations(json.abbreviations);
         alert("Đã tải dự án thành công!");
       } catch (err) {
         alert("File dự án không hợp lệ!");
@@ -654,6 +659,14 @@ Viết nội dung đồ án của bạn ở đây...
               setTimeout(() => jumpToLine(line), 100);
             }}
             onFix={handleAutoFix}
+          />
+        )}
+
+        {/* ABBREVIATIONS TAB */}
+        {activeTab === "abbreviations" && (
+          <AbbreviationsTab
+            abbreviations={abbreviations}
+            setAbbreviations={setAbbreviations}
           />
         )}
       </main>

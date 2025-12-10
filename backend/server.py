@@ -35,6 +35,7 @@ class ExportRequest(BaseModel):
     figures: List[dict]
     tables: List[dict]
     citations: List[dict]
+    abbreviations: List[dict] = []
 
 class ProjectData(BaseModel):
     content: str
@@ -101,12 +102,13 @@ async def export_docx_endpoint(req: ExportRequest):
             
         tables = [Table(**t) for t in req.tables]
         citations = [Citation(**c) for c in req.citations]
+        abbreviations = req.abbreviations if req.abbreviations else []
         
         import tempfile
         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
             output_path = tmp.name
             
-        success, msg = export_to_docx(output_path, req.content, settings, figures, tables, citations)
+        success, msg = export_to_docx(output_path, req.content, settings, figures, tables, citations, abbreviations)
         
         if not success:
             raise HTTPException(status_code=500, detail=msg)

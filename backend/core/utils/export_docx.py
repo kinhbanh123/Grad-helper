@@ -135,9 +135,9 @@ def render_latex_to_image(latex_str, font_size_pt=12, is_display=False):
         render_str = f"${render_str}$"
             
         # Adjust font size to match document text
-        effective_font_size = font_size_pt * 0.75  # Inline math same size as text
+        effective_font_size = font_size_pt * 0.65  # Inline math smaller to match text height
         if is_display:
-            effective_font_size = font_size_pt * 0.70  # Display math slightly smaller
+            effective_font_size = font_size_pt * 0.60  # Display math also smaller
             
         # Draw text with baseline alignment for accurate descent calculation
         text = fig.text(0.5, 0.5, render_str, fontsize=effective_font_size, ha='center', va='baseline')
@@ -349,7 +349,8 @@ def setup_styles(doc, settings: Settings):
         pass
 
 def export_to_docx(file_path: str, text: str, settings: Settings, 
-                   figures: List[Figure], tables: List[Table], citations: List[Citation]):
+                   figures: List[Figure], tables: List[Table], citations: List[Citation],
+                   abbreviations: List[dict] = None):
     try:
         doc = Document()
         setup_styles(doc, settings)
@@ -392,6 +393,100 @@ def export_to_docx(file_path: str, text: str, settings: Settings,
             doc.add_paragraph("DANH MỤC BẢNG BIỂU", style='Front Heading')
             p = doc.add_paragraph()
             add_toc_field(p, r'TOC \h \z \t "Table Caption,1"')
+            doc.add_page_break()
+        
+        # 4. DANH MỤC CÁC CHỮ VIẾT TẮT VÀ KÝ HIỆU (Chuẩn VN: 2 cột)
+        if abbreviations and len(abbreviations) > 0:
+            doc.add_paragraph("DANH MỤC CÁC CHỮ VIẾT TẮT VÀ KÝ HIỆU", style='Front Heading')
+            
+            # Separate abbreviations and symbols
+            abbr_list = [a for a in abbreviations if a.get('type') == 'abbreviation']
+            symbol_list = [a for a in abbreviations if a.get('type') == 'symbol']
+            
+            # Sort alphabetically
+            abbr_list.sort(key=lambda x: x.get('abbreviation', ''))
+            symbol_list.sort(key=lambda x: x.get('abbreviation', ''))
+            
+            # Create table for abbreviations (2 columns - VN standard)
+            if abbr_list:
+                # Sub-heading for abbreviations
+                p = doc.add_paragraph()
+                run = p.add_run("Chữ viết tắt")
+                set_font_complex(run.font, settings.font_family, settings.font_size, bold=True)
+                
+                # Table with header row - 2 columns
+                abbr_table = doc.add_table(rows=len(abbr_list) + 1, cols=2)
+                abbr_table.style = 'Table Grid'
+                
+                # Header row
+                header_row = abbr_table.rows[0]
+                headers = ["Chữ viết tắt", "Diễn giải đầy đủ"]
+                for col_idx, header_text in enumerate(headers):
+                    cell = header_row.cells[col_idx]
+                    cell.text = header_text
+                    for para in cell.paragraphs:
+                        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        for run in para.runs:
+                            set_font_complex(run.font, settings.font_family, settings.font_size, bold=True)
+                
+                # Data rows
+                for idx, item in enumerate(abbr_list):
+                    row = abbr_table.rows[idx + 1]  # +1 to skip header
+                    # Abbreviation column (center)
+                    cell0 = row.cells[0]
+                    cell0.text = item.get('abbreviation', '')
+                    for para in cell0.paragraphs:
+                        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        for run in para.runs:
+                            set_font_complex(run.font, settings.font_family, settings.font_size)
+                    # Full form column (left)
+                    cell1 = row.cells[1]
+                    cell1.text = item.get('fullForm', '')
+                    for para in cell1.paragraphs:
+                        for run in para.runs:
+                            set_font_complex(run.font, settings.font_family, settings.font_size)
+                
+                doc.add_paragraph()  # Spacing
+            
+            # Create table for symbols (2 columns - VN standard)
+            if symbol_list:
+                # Sub-heading for symbols
+                p = doc.add_paragraph()
+                run = p.add_run("Ký hiệu")
+                set_font_complex(run.font, settings.font_family, settings.font_size, bold=True)
+                
+                # Table with header row - 2 columns
+                symbol_table = doc.add_table(rows=len(symbol_list) + 1, cols=2)
+                symbol_table.style = 'Table Grid'
+                
+                # Header row
+                header_row = symbol_table.rows[0]
+                headers = ["Ký hiệu", "Diễn giải đầy đủ"]
+                for col_idx, header_text in enumerate(headers):
+                    cell = header_row.cells[col_idx]
+                    cell.text = header_text
+                    for para in cell.paragraphs:
+                        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        for run in para.runs:
+                            set_font_complex(run.font, settings.font_family, settings.font_size, bold=True)
+                
+                # Data rows
+                for idx, item in enumerate(symbol_list):
+                    row = symbol_table.rows[idx + 1]  # +1 to skip header
+                    # Symbol column (center, italic)
+                    cell0 = row.cells[0]
+                    cell0.text = item.get('abbreviation', '')
+                    for para in cell0.paragraphs:
+                        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        for run in para.runs:
+                            set_font_complex(run.font, settings.font_family, settings.font_size, italic=True)
+                    # Full form column (left)
+                    cell1 = row.cells[1]
+                    cell1.text = item.get('fullForm', '')
+                    for para in cell1.paragraphs:
+                        for run in para.runs:
+                            set_font_complex(run.font, settings.font_family, settings.font_size)
+            
             doc.add_page_break()
         
         # --- CONTENT ---
@@ -777,8 +872,8 @@ def export_to_docx(file_path: str, text: str, settings: Settings,
                                     # Create new paragraph for remaining text
                                     p = doc.add_paragraph(style='Normal')
                                 else:
-                                    # Inline: just show in italic gray
-                                    run = p.add_run(f"[{latex_content}]")
+                                    # Inline: just show simple placeholder
+                                    run = p.add_run("[công thức]")
                                     set_font_complex(run.font, settings.font_family, settings.font_size, italic=True, color=RGBColor(128, 128, 128))
                             continue
 

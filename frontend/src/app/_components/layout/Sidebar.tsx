@@ -1,9 +1,9 @@
-import { FileText, Edit3, BookOpen, Settings, Save, FolderOpen, Upload, Download, AlertTriangle } from "lucide-react";
+import { FileText, Edit3, BookOpen, Settings, Save, FolderOpen, Upload, Download, AlertTriangle, List } from "lucide-react";
 import { Button } from "../ui/Button";
 
 interface SidebarProps {
-    activeTab: "editor" | "citations" | "settings" | "smart-zone";
-    setActiveTab: (tab: "editor" | "citations" | "settings" | "smart-zone") => void;
+    activeTab: "editor" | "citations" | "settings" | "smart-zone" | "abbreviations";
+    setActiveTab: (tab: "editor" | "citations" | "settings" | "smart-zone" | "abbreviations") => void;
     handleDownloadProject: () => void;
     handleImportClick: () => void;
     handleSave: () => void;
@@ -51,6 +51,13 @@ export function Sidebar({
                     <BookOpen className="w-4 h-4" /> Trích dẫn
                 </Button>
                 <Button
+                    variant={activeTab === "abbreviations" ? "secondary" : "ghost"}
+                    className="w-full justify-start gap-2" size="default"
+                    onClick={() => setActiveTab("abbreviations")}
+                >
+                    <List className="w-4 h-4" /> Viết tắt & Ký hiệu
+                </Button>
+                <Button
                     variant={activeTab === "settings" ? "secondary" : "ghost"}
                     className="w-full justify-start gap-2" size="default"
                     onClick={() => setActiveTab("settings")}
@@ -79,3 +86,4 @@ export function Sidebar({
         </aside>
     );
 }
+
